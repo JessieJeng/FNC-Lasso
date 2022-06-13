@@ -5,18 +5,9 @@
 #' This function implements a transfer learning procedure for polygenic risk score analysis.
 ######################################################
 
-# FNP Estimation
-fnp.est <- function(z, t, s, side) {
-  p <- length(z)
-  if (side==1) {rej=sum(z>t)}
-  if (side==2) {rej=sum(abs(z)>t)}
-  fnp <- 1 - rej/s + side*(p-s)*pnorm(-t, 0, 1)/s
-  if (fnp<0) {fnp=0} else { if (fnp>1) {fnp=1} }
-  return(fnp)
-}
-
 # Signal Proportion Estimation
-signal_est <- function(z, N_simulate=1000, alpha){
+
+signal.est <- function(z, N_simulate=1000, alpha){
   # generate series
   p <- length(z)
   zz <- matrix(0, nrow = N_simulate, ncol = p)
@@ -46,9 +37,25 @@ signal_est <- function(z, N_simulate=1000, alpha){
   return(pi*p)
 }
 
+
+# FNP Estimation
+## z: test statistics;
+## t: threshold;
+## side: 1 for one-sided test/ 2 for two-sided test
+fnp.est <- function(z, t, side) {
+  s <- signal.est(z)
+  p <- length(z)
+  if (side==1) {rej=sum(z>t)}
+  if (side==2) {rej=sum(abs(z)>t)}
+  fnp <- 1 - rej/s + side*(p-s)*pnorm(-t, 0, 1)/s
+  if (fnp<0) {fnp=0} else { if (fnp>1) {fnp=1} }
+  return(fnp)
+}
+
+
+
 # DCOE Process
-dcoe <- function(z, epsilon, s, side) {
-  s <- signal_est(z)
+dcoe <- function(z, epsilon, side) {
   if (side==1) {z.order = sort(z, decreasing = T)}
   if (side==2) {z.order = sort(abs(z), decreasing = T)}
   j <- 1
