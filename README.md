@@ -15,3 +15,14 @@ Install DCOELasso from GitHub using
 library(devtools)
 install_github(repo = "JessieJeng/DCOE-Lasso")
 ```
+
+# Example Use
+
+The following examples demonstrate how to use the package given a matrix of SNPs (X), a vector of phenotype (y) and a vector of summary statistics from base data (z).  Side is 1 if the test statistics is one-sided and 2 for two-sided test statistics. Epsilon is the series of FNP control levels, which works as a hype-parameter in this algorithm.
+
+```r{echo = FALSE, message = FALSE}
+side <- 1
+epsilon <- 0.02*c(1:20)
+model <- dcoelasso.fit(z, y, X, side, epsilon)
+pred <- dcoelasso.predict(model, X.test)
+```
