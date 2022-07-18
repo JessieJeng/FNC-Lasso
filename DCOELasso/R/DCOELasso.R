@@ -68,7 +68,7 @@ dcoe <- function(z, epsilon, side=1) {
   j_hat <- c()
   t_hat <- c()
   for (i in 1:length(epsilon)) {
-    while (fnp.est(z, z.order[j], s, side) > epsilon[i]) {
+    while (fnp.est(z, z.order[j], side) > epsilon[i]) {
       j <- j + 1
       print(c(i,j))
     }
