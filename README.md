@@ -26,5 +26,11 @@ The following examples demonstrate how to use the package given a matrix of SNPs
 side <- 1
 epsilon <- 0.02*c(1:20)
 model <- dcoelasso.fit(z, y, X, side, epsilon)
+```
+## DCOELasso model predicting
+Given a trained model object, one can easily use predict function to predict the results for a new matrix of SNPs.
+
+
+```r{echo = FALSE, message = FALSE}
 pred <- dcoelasso.predict(model, X.test)
 ```
