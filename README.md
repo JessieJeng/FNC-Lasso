@@ -13,13 +13,13 @@ Install DCOELasso from GitHub using
 
 ```r{echo = FALSE, message = FALSE}
 library(devtools)
-install_github(repo = "JessieJeng/DCOE-Lasso")
+install_github(repo = "JessieJeng/FNC-Lasso")
 ```
 
 # Example Use
 
 
-## DCOELasso model fitting
+## FNC-Lasso model fitting
 The following examples demonstrate how to use the package given a matrix of SNPs (X), a vector of phenotype (y) and a vector of summary statistics from base data (z).  Side is 1 if the test statistics is one-sided and 2 for two-sided test statistics. Epsilon is the series of FNP control levels, which works as a hype-parameter in this algorithm.
 
 ```r{echo = FALSE, message = FALSE}
@@ -27,7 +27,7 @@ side <- 1
 epsilon <- 0.02*c(1:20)
 model <- dcoelasso.fit(z, y, X, side, epsilon)
 ```
-## DCOELasso model predicting
+## FNC-Lasso model predicting
 Given a trained model object, one can easily use predict function to predict the results for a new matrix of SNPs.
 
 
