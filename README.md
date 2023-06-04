@@ -9,11 +9,11 @@ the base data; and (2) conducting Lasso to integrate the extracted knowledge wit
 the target training data for accurate trans-data prediction.
 
 # Installation
-Install DCOELasso from GitHub using
+Install FNC+LASSO from GitHub using
 
 ```r{echo = FALSE, message = FALSE}
 library(devtools)
-install_github(repo = "JessieJeng/FNC-Lasso")
+install_github(repo = "JessieJeng/FNC-Lasso", subdir = "FNC+LASSO")
 ```
 
 # Example Use
