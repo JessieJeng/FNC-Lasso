@@ -23,6 +23,7 @@ library(bigsnpr)
 ## packages for cluster computing
 library(foreach)
 library(doParallel)
+library(dplyr)
 ##################################
 #### Part 1. Useful Functions
 ##################################
@@ -89,7 +90,11 @@ colnames(genotype) <- obj.bigSNP$map$marker.ID
 ## extract chr information for PRS methods
 CHR <- obj.bigSNP$map$chromosome
 POS <- obj.bigSNP$map$physical.pos
-
+RSID <- obj.bigSNP$map$marker.ID
+dat <- as.data.frame(cbind(CHR,POS))
+colnames(dat) <- c("chr","pos")
+POS.hg19 <- snp_modifyBuild(info_snp=dat, liftOver = "liftOver",from = "hg18",to = "hg19")$pos
+remove.idx <- RSID[which(is.na(POS.hg19))]
 ##################################
 #### Part 3. Simulation Process
 ##################################
@@ -98,10 +103,10 @@ p <-  dim(genotype)[2] # number of SNPs
 Sigma <- cor(genotype) # correlation matrix
 n <- dim(genotype)[1] # number of target data (=n_target)
 n_signal <- 50 # number of signals
-delta <- 0.7 #0.3 0.5 0.7
+delta <- 0.7 #0.3, 0.5, 0.7 overlap proportion of signal sets across base and target data
 n_ref <- 4000 # sample size of base data
 h <- 0.1
-rho <- 0.7 # rho is the correlation.  
+rho <- 0.9 #0.5, 0.7, 0.9 correlation of beta across base and target, try 0.5, 0.7, and 1  
 sigma.beta <- matrix(c(h*h, h*h*rho, h*h*rho, h*h), nrow = 2, ncol = 2, byrow = TRUE) # covariance matrix for overlap beta
 
 # generate critical sequences
@@ -118,7 +123,7 @@ for(i in 1 : N_simulate){
   U <- abs(ind / p - p_order) / sqrt(p_order/2)
   Vn[i] <- max(U[2 : floor(p / 2)], 0)
 }
-c05 <- quantile(Vn, 1 - alpha)  
+c05 <- quantile(Vn, 1 - alpha)  #c05=0.04617 for p=5089
 
 # standardize genotype matrix for regression model
 x <- scale(as.matrix(genotype[1:n,]))
@@ -144,6 +149,7 @@ f <- function(k) {
   set.seed(2)
   nseed <- ceiling(runif(loopNum)*10000)
   set.seed(nseed[k])
+  
   ### Generate summary statistics ###
   locate <- sample(1 : p, ((2-delta)*n_signal), replace=F) # generate the location of active SNPs
   locate.base <- locate[1 : ((1-delta)*n_signal)] # locate of signals only exist in base data
@@ -159,7 +165,7 @@ f <- function(k) {
   intensity[locate.base] = sqrt(n_ref)*beta.base
   intensity[locate.overlap] = sqrt(n_ref)*beta.overlap[,1]
   
-  t <- mvrnorm(1, intensity, Sigma) ## ~4.4mins
+  t <- mvrnorm(1, Sigma%*%intensity, Sigma) ## ~4.4mins
   ## estimate signal proportion based on summary of reference data
   ## will translate MR functions to p-value version, instead of z-value version
   pi <- MR05(t, c05)
@@ -177,6 +183,8 @@ f <- function(k) {
   # calculate SST for testing data
   sst <- sum((y2-mean(y2))^2)
   n.test <- length(y2)
+  # calculate total heritability (h^2)
+  h2 = var(x2%*%beta)/var(y2) # h2=0.309 from 1 replicate with n_train=500
   
   ## FNP+Lasso with optimal epsilon level
   epsilon <- 0.02*c(1:20) # a series of FNP levels
@@ -185,8 +193,8 @@ f <- function(k) {
   lasso.final <- matrix(0, 1, p)
   fnp.tune <- fnp.opt.series(t, epsilon, s = max(ceiling(pi*p), 1), side = 2)$j_hat
   for (tune in 1:length(epsilon)){
-    ## fnp screening
-    fnp.tune[tune] <- min(fnp.tune[tune], (dim(x1)[1]-1))
+    ## fnp screening, remove taking "min"? 
+    #fnp.tune[tune] <- min(fnp.tune[tune], (dim(x1)[1]-1))
     ## indices of selected variables
     screen.ind <- t.ind[1:fnp.tune[tune]]
     ## Lasso on fnp reduced set and residual sum of square
@@ -257,8 +265,7 @@ f <- function(k) {
   ########################################################################################################################
   ########################################################################################################################
   # Compared with lassosum
-  ## Compared with LDPred Prs
-  POS2 <- snp_asGeneticPos(CHR, POS, ncores = 1)
+  POS2 <- snp_asGeneticPos(CHR, POS.hg19, dir = "tmp-data", ncores = 1)
   df_beta <- data.frame(beta = t, beta_se = 1, n_eff = n_ref)
   corr0 <- snp_cor(G, ncores = 1, infos.pos = POS2, size = 3 / 1000)
   corr <- bigsparser::as_SFBM(as(corr0, "dgCMatrix"))
@@ -345,7 +352,7 @@ f <- function(k) {
   ########################################################################################################################
   ########################################################################################################################
   # Compared with LDpred 
-  POS2 <- snp_asGeneticPos(CHR, POS, ncores = 1)
+  POS2 <- snp_asGeneticPos(CHR, POS.hg19, dir = "tmp-data", ncores = 1)
   df_beta <- data.frame(beta = t, beta_se = 1, n_eff = n_ref)
   corr0 <- snp_cor(G, ncores = 1, infos.pos = POS2, size = 3 / 1000)
   corr <- bigsparser::as_SFBM(as(corr0, "dgCMatrix"))
@@ -407,7 +414,7 @@ loopNum <- 50 # number of simulation loops
 n_signal <- 50 # number of signals
 n_ref <- 4000 # sample size of base data
 
-cl <- makeCluster(4)
+cl <- makeCluster(8)
 registerDoParallel(cl)
 data.out <- matrix(0, 1, 61)
 data <- foreach(k = 1:loopNum, .combine = "cbind") %dopar% f(k)
@@ -416,13 +423,13 @@ for(j in 1:30) {
   data.out[1, (2*(j-1)+2)] <- mean(data[j, ])
   data.out[1, (2*(j-1)+3)] <- sd(data[j, ])
 }
+
+write.csv(data.out, "results_combine_n2000_rho09_h01_delta07.csv")
+write.csv(data, "data_combine_n2000_rho09_h01_delta07.csv")
 stopImplicitCluster()
 stopCluster(cl)
 
-
 print(data.out)
 
-write.csv(data.out, "results.csv")
-write.csv(data, "data.csv")
 
 

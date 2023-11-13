@@ -23,6 +23,7 @@ library(bigsnpr)
 ## packages for cluster computing
 library(foreach)
 library(doParallel)
+library(dplyr)
 ##################################
 #### Part 1. Useful Functions
 ##################################
@@ -89,7 +90,11 @@ colnames(genotype) <- obj.bigSNP$map$marker.ID
 ## extract chr information for PRS methods
 CHR <- obj.bigSNP$map$chromosome
 POS <- obj.bigSNP$map$physical.pos
-
+RSID <- obj.bigSNP$map$marker.ID
+dat <- as.data.frame(cbind(CHR,POS))
+colnames(dat) <- c("chr","pos")
+POS.hg19 <- snp_modifyBuild(info_snp=dat, liftOver = "liftOver",from = "hg18",to = "hg19")$pos
+remove.idx <- RSID[which(is.na(POS.hg19))]
 ##################################
 #### Part 3. Simulation Process
 ##################################
@@ -98,8 +103,9 @@ p <-  dim(genotype)[2] # number of SNPs
 Sigma <- cor(genotype) # correlation matrix
 n <- dim(genotype)[1] # number of target data (=n_target)
 n_signal <- 50 # number of signals
+delta <- 0.7 #0.3, 0.5, 0.7 overlap between base and target data (nested)
 n_ref <- 4000 # sample size of base data
-delta <- 0.7 # overlap between base and target data (nested)
+
 # generate critical sequences
 alpha <- 1/sqrt(log(p)) #proportion est tends to be larger
 set.seed(1)
@@ -114,7 +120,7 @@ for(i in 1 : N_simulate){
   U <- abs(ind / p - p_order) / sqrt(p_order/2)
   Vn[i] <- max(U[2 : floor(p / 2)], 0)
 }
-c05 <- quantile(Vn, 1 - alpha)  
+c05 <- quantile(Vn, 1 - alpha)  #c05=0.04617 for p=5089
 
 # standardize genotype matrix for regression model
 x <- scale(as.matrix(genotype[1:n,]))
@@ -140,12 +146,17 @@ f <- function(k) {
   set.seed(2)
   nseed <- ceiling(runif(loopNum)*10000)
   set.seed(nseed[k])
+  
   ### Generate summary statistics ###
   locate.base <- sample(1 : p, n_signal, replace=F) # generate the location of active SNPs
   
   ## simulate summary statistics for screening based on reference data
   intensity <- rep(0, p)
   beta.base <- runif(n_signal, 0.05, 0.15) # generate beta for base data
+  
+  #negative.base <- sample(1 : length(beta.base), floor(length(beta.base)/2), replace=F) # select some signal as negative
+  #beta.base[negative.base] <- -1 * beta.base[negative.base]
+  
   intensity[locate.base] = sqrt(n_ref)*beta.base # put beta into intensity vector in which noise = 0
   t <- mvrnorm(1, intensity, Sigma) ## ~4.4mins generate base data
   
@@ -153,7 +164,7 @@ f <- function(k) {
   ## will translate MR functions to p-value version, instead of z-value version
   pi <- MR05(t, c05)
   # get index for sorted t (t is one-sided so abs is not needed)
-  tt <- t # abs(t) for two-sided
+  tt <- t # for two-sided
   t.ind <- sort(tt, decreasing=T, index.return=T)$ix
   
   ## Simulate training and testing data
@@ -162,6 +173,9 @@ f <- function(k) {
   locate.target <- locate.base[target.index] # select target signal location from base signal location list
   beta.target.prep <- runif(n_signal, 0.05, 0.15) # create a list which length = # signal in base
   beta.target <- beta.target.prep[target.index] # select target signal in this list
+  
+  #negative.target <- sample(1 : length(beta.target), floor(length(beta.target)/2), replace=F) # select some signal as negative
+  #beta.target[negative.target] <- -1 * beta.target[negative.target]
   
   beta <- rep(0, p)
   beta[locate.target] <- beta.target
@@ -173,14 +187,14 @@ f <- function(k) {
   n.test <- length(y2)
   
   ## FNP+Lasso with optimal epsilon level
-  epsilon <- 0.02*c(1:20) # a series of FNP levels
+  epsilon <- 0.02*c(1:40) # a series of FNP levels
   rss.lasso <- rep(NA, length(epsilon)) # for each levels
   lasso.tune <-  matrix(0, length(epsilon), p)
   lasso.final <- matrix(0, 1, p)
-  fnp.tune <- fnp.opt.series(t, epsilon, s = max(ceiling(pi*p), 1), side = 1)$j_hat
+  fnp.tune <- fnp.opt.series(t, epsilon, s = max(ceiling(pi*p), 1), side = 2)$j_hat
   for (tune in 1:length(epsilon)){
-    ## fnp screening
-    fnp.tune[tune] <- min(fnp.tune[tune], (dim(x1)[1]-1))
+    ## fnp screening, remove taking "min"? 
+    #fnp.tune[tune] <- min(fnp.tune[tune], (dim(x1)[1]-1))
     ## indices of selected variables
     screen.ind <- t.ind[1:fnp.tune[tune]]
     ## Lasso on fnp reduced set and residual sum of square
@@ -199,9 +213,9 @@ f <- function(k) {
   ## variable selection
   lasso.ind <- which(lasso.final[1,]!=0) # selected SNPs
   n.lasso <- length(lasso.ind)
-  TP.lasso <- sum(locate %in% lasso.ind)
+  TP.lasso <- sum(locate.target %in% lasso.ind)
   precision.lasso <- TP.lasso/length(lasso.ind)
-  recall.lasso <- TP.lasso/n_signal
+  recall.lasso <- TP.lasso/floor(n_signal*delta)
   fm.lasso <- sqrt(precision.lasso*recall.lasso)
   f1.lasso <- 2*precision.lasso*recall.lasso/(precision.lasso+recall.lasso)
   aic.lasso <- 2*n.lasso + n.test * log(rss.valid.lasso/n.test)
@@ -221,9 +235,9 @@ f <- function(k) {
   ## variable selection
   sis.lasso.ind <- which(sis.lasso.final[1,]!=0) # selected SNPs
   n.sis.lasso <- length(sis.lasso.ind)
-  TP.sis.lasso <- sum(locate %in% sis.lasso.ind)
+  TP.sis.lasso <- sum(locate.target %in% sis.lasso.ind)
   precision.sis.lasso <- TP.sis.lasso/length(sis.lasso.ind)
-  recall.sis.lasso <- TP.sis.lasso/n_signal
+  recall.sis.lasso <- TP.sis.lasso/floor(n_signal*delta)
   fm.sis.lasso <- sqrt(precision.sis.lasso*recall.sis.lasso)
   f1.sis.lasso <- 2*precision.sis.lasso*recall.sis.lasso/(precision.sis.lasso+recall.sis.lasso)
   aic.sis.lasso <- 2*n.sis.lasso + n.test * log(rss.valid.sis.lasso/n.test)
@@ -240,9 +254,9 @@ f <- function(k) {
   ## variable selection
   just.lasso.ind <- which(just.lasso!=0) # selected SNPs
   n.just.lasso <- length(just.lasso.ind)
-  TP.just.lasso <- sum(locate %in% just.lasso.ind)
+  TP.just.lasso <- sum(locate.target %in% just.lasso.ind)
   precision.just.lasso <- TP.just.lasso/length(just.lasso.ind)
-  recall.just.lasso <- TP.just.lasso/n_signal
+  recall.just.lasso <- TP.just.lasso/floor(n_signal*delta)
   fm.just.lasso <- sqrt(precision.just.lasso*recall.just.lasso)
   f1.just.lasso <- 2*precision.just.lasso*recall.just.lasso/(precision.just.lasso+recall.just.lasso)
   aic.just.lasso <- 2*n.just.lasso + n.test * log(rss.valid.just.lasso/n.test)
@@ -251,8 +265,7 @@ f <- function(k) {
   ########################################################################################################################
   ########################################################################################################################
   # Compared with lassosum
-  ## Compared with LDPred Prs
-  POS2 <- snp_asGeneticPos(CHR, POS, ncores = 1)
+  POS2 <- snp_asGeneticPos(CHR, POS.hg19, dir = "tmp-data", ncores = 1)
   df_beta <- data.frame(beta = t, beta_se = 1, n_eff = n_ref)
   corr0 <- snp_cor(G, ncores = 1, infos.pos = POS2, size = 3 / 1000)
   corr <- bigsparser::as_SFBM(as(corr0, "dgCMatrix"))
@@ -282,9 +295,9 @@ f <- function(k) {
   
   ind.lassosum = lassosum.ind
   n.lassosum.prs = length(ind.lassosum)
-  TP.lassosum = sum(locate %in% ind.lassosum)
+  TP.lassosum = sum(locate.target %in% ind.lassosum)
   precision.lassosum.prs = TP.lassosum/length(ind.lassosum)
-  recall.lassosum.prs = TP.lassosum/n_signal
+  recall.lassosum.prs = TP.lassosum/floor(n_signal*delta)
   fm.lassosum.prs <- sqrt(precision.lassosum.prs*recall.lassosum.prs)
   f1.lassosum.prs <- 2*precision.lassosum.prs*recall.lassosum.prs/(precision.lassosum.prs+recall.lassosum.prs)
   rss.lassosum.prs <- sum((summary(lm.fit.lassosum)$residuals)^2)
@@ -294,7 +307,7 @@ f <- function(k) {
   ########################################################################################################################
   # Compared with C+T
   ## grid clumping
-  p.value <- 1 - pnorm(t)
+  p.value = 2*(1-pnorm(abs(t)))
   beta <- t
   lpval <- -log10(p.value)
   all_keep <- snp_grid_clumping(G, CHR, POS, ind.row = ind.train, exclude = which(is.na(lpval)),
@@ -327,10 +340,10 @@ f <- function(k) {
   lm.fit.ct <- lm(y2~., data = dt)
   R.ct.prs <- summary(lm.fit.ct)$r.squared
   ## variable selection
-  TP.ct <- sum(locate %in% ind.ct)
+  TP.ct <- sum(locate.target %in% ind.ct)
   n.ct.prs <- length(ind.ct)
   precision.ct.prs <- TP.ct/length(ind.ct)
-  recall.ct.prs <- TP.ct/n_signal
+  recall.ct.prs <- TP.ct/floor(n_signal*delta)
   fm.ct.prs <- sqrt(precision.ct.prs*recall.ct.prs)
   f1.ct.prs <- 2*precision.ct.prs*recall.ct.prs/(precision.ct.prs+recall.ct.prs)
   rss.ct.prs <- sum((summary(lm.fit.ct)$residuals)^2)
@@ -339,7 +352,7 @@ f <- function(k) {
   ########################################################################################################################
   ########################################################################################################################
   # Compared with LDpred 
-  POS2 <- snp_asGeneticPos(CHR, POS, ncores = 1)
+  POS2 <- snp_asGeneticPos(CHR, POS.hg19, dir = "tmp-data", ncores = 1)
   df_beta <- data.frame(beta = t, beta_se = 1, n_eff = n_ref)
   corr0 <- snp_cor(G, ncores = 1, infos.pos = POS2, size = 3 / 1000)
   corr <- bigsparser::as_SFBM(as(corr0, "dgCMatrix"))
@@ -378,10 +391,10 @@ f <- function(k) {
   ldpred.ind <- which(best_grid_sp!=0)
   ind.ld <- ldpred.ind # selected SNPs by the best model
   ## variable selection 
-  TP.ldpred <- sum(locate %in% ind.ld)
+  TP.ldpred <- sum(locate.target %in% ind.ld)
   n.ld.prs <- length(ind.ld)
   precision.ld.prs <- TP.ldpred/length(ind.ld)
-  recall.ld.prs <- TP.ldpred/n_signal
+  recall.ld.prs <- TP.ldpred/floor(n_signal*delta)
   fm.ld.prs <- sqrt(precision.ld.prs*recall.ld.prs)
   f1.ld.prs <- 2*precision.ld.prs*recall.ld.prs/(precision.ld.prs+recall.ld.prs)
   rss.ld.prs <- sum((summary(lm.fit.sp)$residuals)^2)
@@ -394,14 +407,14 @@ f <- function(k) {
                   n.just.lasso, n.lasso, n.sis.lasso, n.lassosum.prs, n.ct.prs, n.ld.prs), nrow = 30, ncol = 1))
 }
 
+
 #############################################
 #### Part 5. Trigger the Cluster
 #############################################
 loopNum <- 50 # number of simulation loops
 n_signal <- 50 # number of signals
-n_ref <- 4000 # sample size of base data
 
-cl <- makeCluster(4)
+cl <- makeCluster(8)
 registerDoParallel(cl)
 data.out <- matrix(0, 1, 61)
 data <- foreach(k = 1:loopNum, .combine = "cbind") %dopar% f(k)
@@ -411,11 +424,10 @@ for(j in 1:30) {
   data.out[1, (2*(j-1)+3)] <- sd(data[j, ])
 }
 
-write.csv(data.out, "results.csv")
-write.csv(data, "data.csv")
+write.csv(data.out, "results_simu1_unimputed_n4000_2000_delta07.csv")
+write.csv(data, "data_simu1_unimputed_n4000_2000_delta07.csv")
 stopImplicitCluster()
 stopCluster(cl)
 
 print(data.out)
-
 
