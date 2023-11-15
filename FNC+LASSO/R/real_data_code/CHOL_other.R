@@ -51,53 +51,45 @@ MR05 = function(z, c05){
   return(pi)
 }
 
-setwd('/Users/yifeihu/newmatching')
+args = commandArgs(trailingOnly=TRUE)
+k = as.numeric(args[1])
+loopNum <- 50
 
-snp_readBed("merged_QC.bed")
-obj.bigSNP <- snp_attach("merged_QC.rds")
-
-samples.target <- fread('merged_QC.fam')[,1:2]
+setwd('/home3/vvenka23/FNC-Lasso/RedoPaperCoLaus/CHOL0.8')
+tmpfile <- tempfile()
+snp_readBed("/home3/vvenka23/FNC-Lasso/RedoPaperCoLaus/dataHg38/hg38/merged_QC_8.bed",backingfile = tmpfile)
+obj.bigSNP <- snp_attach(paste0(tmpfile, ".rds"))
+samples.target <- fread('/home3/vvenka23/FNC-Lasso/RedoPaperCoLaus/dataHg38/hg38/merged_QC_8.fam')[,1:2]
 colnames(samples.target) <- c("FID", "IID") 
-
-pc10 <- fread('top10PC.txt')
+pc10 <- fread('/home3/DrYao/CoLaus/data/top10PC.txt')
 pc10.sub <- merge(samples.target, pc10, by="IID", sort = FALSE)
-phe <- fread('Pheno.csv')[,c('Global_ID', "SubjectAlias","AGE", "SEX","HT_cm_","CHOL", "TRIG")]
+phe <- fread('/home3/DrYao/CoLaus/data/CoLausPheno.csv')[,c('Global_ID', "SubjectAlias","AGE", "SEX","HT_cm_","CHOL", "TRIG")]
 sex <- rep(0, dim(phe)[1])
 sex[phe$SEX=='M'] <- 1
 phe$SEX <- sex
-
 phenotype <- merge(pc10.sub, phe, by.x="IID", by.y="SubjectAlias", sort = FALSE)
 phenotype <- phenotype[!is.na(phenotype$CHOL),]
 samples.idx <- samples.target$IID %in% phenotype$IID # matched samples indice
-
-
 G <- obj.bigSNP$genotypes[samples.idx, ]
 code <- rep(NA_real_, 256)
 code[1:3] <- c(0, 1, 2)
 G <- FBM.code256(dim(G)[1], dim(G)[2], code, init = G)
-
-
-
 sumstats <- 
-  bigreadr::fread2('/Users/yifeihu/CHOL/20686565-GCST000760-EFO_0004574.h.tsv.gz')[,
-                                                                                       c("hm_rsid", "chromosome", "hm_pos", "hm_effect_allele", "hm_other_allele", "p_value", "beta", "standard_error")]
-
-
-names(sumstats) <- c("rsid", "chr", "pos","a0", "a1","p", "beta", "se")
+  bigreadr::fread2('/home3/vvenka23/FNC-Lasso/RedoPaperCoLaus/CHOL0.8/20686565-GCST000760-EFO_0004574.h.tsv.gz')[,c("hm_rsid", "chromosome", "hm_pos", "hm_effect_allele", "hm_other_allele", "p_value", "beta", "standard_error")]
+names(sumstats) <- c("rsid", "chr", "pos", "a0", "a1", "p", "beta", "se")
 sumstats$n_eff <- 100184
-
 map <- obj.bigSNP$map[-3]
 names(map) <- c("chr", "rsid", "pos", "a0", "a1")
-info_snp <- snp_match(sumstats, map, join_by_pos = FALSE)
-
+info_snp <- snp_match(sumstats, map, join_by_pos = TRUE)
 
 beta <- rep(NA, ncol(G))
 beta[info_snp$`_NUM_ID_`] <- info_snp$beta
 lpval <- rep(NA, ncol(G))
 lpval[info_snp$`_NUM_ID_`] <- -log10((1-pnorm(abs(info_snp$beta/info_snp$se)))*2)
+lpval[info_snp$`_NUM_ID_`] <- -log10(info_snp$p)
+
 CHR <- obj.bigSNP$map$chromosome
 POS <- obj.bigSNP$map$physical.pos
-
 
 p <-  dim(info_snp)[1]
 n <- dim(G)[1] 
@@ -108,8 +100,6 @@ t.ind <- sort(tt, decreasing=T, index.return=T, na.last = TRUE)$ix
 
 X.just.lasso <- FBM(n, p, init=G[,info_snp$`_NUM_ID_`])
 
-
-f <- function(k) {
   library(MASS)
   library(hdi) 
   library(glmnet)
@@ -155,7 +145,7 @@ f <- function(k) {
   aic.sis.lasso <- 2 * n.sis.lasso + n.test * log(rss.sis.lasso/n.test)
   ##################################################################################################
   set.seed(0)
-  pi = MR05(scale(t[!is.na(t)]), 0.007304347) #CHOL
+  pi = MR05(scale(t[!is.na(t)]), 0.002976302) # CHOL
   epsilon <- 0.02*c(1:40) 
   rss.lasso <- rep(NA, length(epsilon))
   lasso.tune <-  matrix(0, length(epsilon), p)
@@ -185,6 +175,7 @@ f <- function(k) {
   n.fnc.lasso <- n.lasso[which.min(rss.lasso)] 
   aic.fnc.lasso <- 2*n.fnc.lasso + n.test * log((1-R.fnc.lasso)*sst/n.test)
   ##################################################################################################
+  set.seed(0)
   just.lasso.t1 <- Sys.time()
   mod.just.lasso <- big_spLinReg(X.just.lasso, y[ind.train], K = 5, covar.train = covar_from_df(pc1), ind.train = ind.train, ind.sets = K.fold)
   pred.just.lasso <- predict(mod.just.lasso, X.just.lasso, ind.test, covar.row = covar_from_df(pc2))
@@ -193,61 +184,42 @@ f <- function(k) {
   R.just.lasso <- 1-sum((y2-pred.just.lasso)^2)/sst 
   n.just.lasso <- summary(mod.just.lasso)$nb_var
   aic.just.lasso <- 2*n.just.lasso + n.test * log((1-R.just.lasso)*sst/n.test)
-  ##################################################################################################=
-  csis.t1 <- Sys.time()
-  
-  idx.match <- info_snp$`_NUM_ID_`
-  t.lm <- rep(NA, ncol(G))
-  test <- big_univLinReg(
-    G,
-    y1,
-    ind.train = ind.train,
-    ind.col = info_snp$`_NUM_ID_`,
-    covar.train = covar_from_df(pc1),
-    ncores = 1
-  )
-  t.lm[info_snp$`_NUM_ID_`] <- test$score
-  tt.lm <- abs(t.lm)
-  t.lm.ind <- sort(tt.lm, decreasing=T, index.return=T, na.last = TRUE)$ix
-  screen.lm.ind.sis <-  t.lm.ind[1:length(ind.train)-1]
-  X.lm.sis <- FBM(n, length(screen.lm.ind.sis), init = G[, screen.lm.ind.sis])
-  mod.lm.sis <- big_spLinReg(X.lm.sis, y[ind.train], K=5, ind.train = ind.train, covar.train = covar_from_df(pc1), ind.sets = K.fold)
-  csis.t2 <- Sys.time()
-  csis.t <-   csis.t2 - csis.t1 
-
-  n.lm.sis <- summary(mod.lm.sis)$nb_var
-  pred.lm.sis <- predict(mod.lm.sis, X.lm.sis, ind.test, covar.row = covar_from_df(pc2))
-  R.lm.sis <- 1-sum((y2-pred.lm.sis)^2)/sst 
-  aic.lm.sis <- 2*n.lm.sis + n.test * log(sum((y2-pred.lm.sis)^2)/n.test)
   ##################################################################################################
+  set.seed(0)
   ct.t1 <- Sys.time()
-  
-  all_keep <- snp_grid_clumping(G, CHR, POS, ind.row = ind.train,
-                                lpS = lpval, exclude = which(is.na(lpval)),
-                                ncores = 3)
-  multi_PRS <- snp_grid_PRS(G, all_keep, beta, lpval, ind.row = ind.train,
-                            n_thr_lpS = 25, ncores = 1,
+
+  G2 <- obj.bigSNP$genotypes[samples.idx, info_snp$"_NUM_ID_"]
+  G2 <- FBM.code256(dim(G2)[1], dim(G2)[2], code, init = G2)
+  CHR2 <- obj.bigSNP$map$chromosome[info_snp$"_NUM_ID_"]
+  POS2 <- obj.bigSNP$map$physical.pos[info_snp$"_NUM_ID_"]
+  ord <- order(POS[info_snp$"_NUM_ID_"])  
+
+  all_keep <- snp_grid_clumping(G2, CHR2, POS2, ind.row = ind.train,
+                                lpS = lpval[info_snp$"_NUM_ID_"], exclude = which(is.na(lpval[info_snp$"_NUM_ID_"])),
+                                ncores = 16)
+  multi_PRS <- snp_grid_PRS(G2, all_keep, beta[info_snp$"_NUM_ID_"], lpval[info_snp$"_NUM_ID_"], ind.row = ind.train,
+                            n_thr_lpS = 25, ncores = 16,
                             grid.lpS.thr = 0.9999 * seq_log(max(0.1, 
-                                                                min(lpval, na.rm = TRUE)), 
-                                                            max(lpval[lpval!=Inf], na.rm =TRUE), 25))
+                                                                min(lpval[info_snp$"_NUM_ID_"], na.rm = TRUE)), 
+                                                            max(lpval[info_snp$"_NUM_ID_"][lpval[info_snp$"_NUM_ID_"]!=Inf], na.rm =TRUE), 25))
   grid <- attr(all_keep, "grid") %>%
     mutate(thr.lp = list(attr(multi_PRS, "grid.lpS.thr")), id = row_number()) %>%
     unnest(cols = "thr.lp")
   s <- nrow(grid)
   
   grid$t <- big_apply(multi_PRS, 
-                      a.FUN = function(X, ind, s, y.train) {
+                      a.FUN = function(X, ind, s, y.train,pc1) {
                         single_PRS <- X[, ind]
                         dt = data.frame(y=y.train, single_PRS, pc1)
                         lm.fit = lm(y~., data = dt)
                         (coef(summary(lm.fit))[, "t value"][2])^2
-                      }, ind = 1:s, s = s, y.train = y1, a.combine = 'c', block.size = 1, ncores = 1)
+                      }, ind = 1:s, s = s, y.train = y1, pc1=pc1,a.combine = 'c', block.size = 1, ncores = 16)
   
   max_prs <- grid[which.max(grid$t), ]
   ind.keep <- unlist(purrr::map(all_keep, max_prs$id))
-  ind.ct <- ind.keep[lpval[ind.keep] > max_prs$thr.lp]
-  opt.prs <- snp_PRS(G, beta[ind.keep], ind.keep = ind.keep, ind.test = ind.test,
-                     lpS.keep = lpval[ind.keep], thr.list = max_prs$thr.lp)
+  ind.ct <- ind.keep[(lpval[info_snp$"_NUM_ID_"])[ind.keep] > max_prs$thr.lp]
+  opt.prs <- snp_PRS(G2, (beta[info_snp$"_NUM_ID_"])[ind.keep], ind.keep = ind.keep, ind.test = ind.test,
+                     lpS.keep = (lpval[info_snp$"_NUM_ID_"])[ind.keep], thr.list = max_prs$thr.lp)
   dt <- data.frame(y2, opt.prs, pc2)
   lm.fit <- lm(y2~., data = dt)
   ct.t2 <- Sys.time()
@@ -259,59 +231,8 @@ f <- function(k) {
   ssr.ct <- sum((lm.fit$residuals)^2)
   n.test <- length(ind.test)
   aic.ct.prs <- 2*n.ct.prs + n.test*log(ssr.ct/n.test)
-  
-  
-  ##################################################################################################
-  opt.tune <- which.min(rss.lasso)
-  opt.idx <- t.ind[1: fnp.tune[opt.tune]]
-  
-  X.opt <- FBM(n, length(opt.idx), init = G[, opt.idx])
-  mod.opt <- big_spLinReg(X.opt , y[ind.train], K = 5, ind.train = ind.train, covar.train = covar_from_df(pc1), ind.sets = K.fold)
-  
-  opt.var <- (mod.opt[[1]][[1]][["beta"]]!=0 | mod.opt[[1]][[2]][["beta"]]!=0 | 
-                mod.opt[[1]][[3]][["beta"]]!=0 |  mod.opt[[1]][[4]][["beta"]]!=0  | mod.opt[[1]][[5]][["beta"]]!=0)
-  opt.var <- opt.var[1:(length(opt.var)-12)]
-  
-  dim(X.opt[ind.train, opt.var])
-  
-  cv.glin <- glinternet.cv(cbind(X.opt[ind.train, opt.var], pc1), y[ind.train], nFolds = 5, numCores = 3,
-                           numLevels=c(rep(1, sum(opt.var)), rep(1, 11), 2), verbose = TRUE, maxIter = 300)
-  
-  pred.lasso = predict(cv.glin, cbind(X.opt[ind.train, opt.var], pc1), type = "response", lambdaType="lambdaHat")
-  pred.fnc <- predict(cv.glin, cbind(X.opt[ind.test, opt.var], pc2), type = "response", lambdaType="lambdaHat")
-  
-  coefs <- coef(cv.glin)
-
-  n.glin <- length(coefs$mainEffects$cat) +  length(coefs$mainEffects$cont)
-  n.para.glin <- length(coefs$mainEffects$cat) + length(coefs$mainEffects$cont) + length(coefs$interactions$catcont) + length(coefs$interactions$contcont)
-  R.glin <- 1-sum((y2-pred.fnc)^2)/sst
-  aic.glin <- 2* n.glin + n.test * log(sum((y2-pred.fnc)^2)/n.test)
-
-  
-  return(matrix(c(R.fnc.lasso, R.sis.lasso, R.just.lasso, R.lm.sis, R.ct.prs, R.glin,
-                  n.fnc.lasso, n.sis.lasso, n.just.lasso, n.lm.sis, n.ct.prs, n.glin,
-                  aic.fnc.lasso, aic.sis.lasso, aic.just.lasso, aic.lm.sis, aic.ct.prs, aic.glin,
-                  fnc.t*60, sis.t, just.lasso.t*60, csis.t*60, ct.t*60, fnc.t*60
-  ), nrow = 24, ncol = 1))
-}
-
-
-
-loopNum <- 16
-cl <- makeCluster(16)
-registerDoParallel(cl)
-data.out <- matrix(0, 1, 48)
-data <- foreach(k = 1:loopNum, .combine = "cbind") %dopar% f(k)
-for(j in 1:24) {
-  data.out[1, (2*(j-1)+1)] <- mean(data[j, ])
-  data.out[1, (2*(j-1)+2)] <- sd(data[j, ])
-}
-
-write.csv(data.out, "CHOL_other_sum.csv")
-write.csv(data, "CHOL_other_data.csv")
-
-stopImplicitCluster()
-stopCluster(cl)
-
-
-
+  print(c("hello",R.ct.prs,R.just.lasso,R.sis.lasso,R.fnc.lasso))
+  write.table(cbind(k,R.fnc.lasso, R.sis.lasso, R.just.lasso, R.ct.prs,
+                  n.fnc.lasso, n.sis.lasso, n.just.lasso, n.ct.prs,
+                  aic.fnc.lasso, aic.sis.lasso, aic.just.lasso, aic.ct.prs,
+                  fnc.t*60, sis.t, just.lasso.t*60, ct.t*60),file="otherOp",quote=FALSE,row.names=FALSE,col.names= !file.exists("otherOp"),append=T)
