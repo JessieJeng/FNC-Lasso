@@ -102,6 +102,22 @@ t[info_snp$`_NUM_ID_`] <- info_snp$beta/info_snp$se
 tt <- abs(t)
 t.ind <- sort(tt, decreasing=T, index.return=T, na.last = TRUE)$ix
 
+# generate critical sequences
+alpha <- 1/sqrt(log(p)) #proportion est tends to be larger
+set.seed(1)
+N_simulate <- 1000
+zz <- mvrnorm(N_simulate, rep(0, p), diag(1, p, p))
+Vn <- rep(NA, N_simulate)
+for(i in 1 : N_simulate){
+  z_order <- sort(zz[i,], decreasing = T, index.return = T)$x 
+  p_order <- 1- pnorm(z_order)
+  ind <- 1 : p
+  U <- rep(0, p)
+  U <- abs(ind / p - p_order) / sqrt(p_order/2)
+  Vn[i] <- max(U[2 : floor(p / 2)], 0)
+}
+c05 <- quantile(Vn, 1 - alpha)  
+
 X.just.lasso <- FBM(n, p, init=G[,info_snp$`_NUM_ID_`])
 
 
@@ -150,7 +166,7 @@ X.just.lasso <- FBM(n, p, init=G[,info_snp$`_NUM_ID_`])
   aic.sis.lasso <- 2 * n.sis.lasso + n.test * log(rss.sis.lasso/n.test)
   ##################################################################################################
   set.seed(0)
-  pi = MR05(scale(t[!is.na(t)]), 0.002976302) # CHOL
+  pi = MR05(scale(t[!is.na(t)]), c05)
   epsilon <- 0.02*c(1:40) 
   rss.lasso <- rep(NA, length(epsilon))
   lasso.tune <-  matrix(0, length(epsilon), p)

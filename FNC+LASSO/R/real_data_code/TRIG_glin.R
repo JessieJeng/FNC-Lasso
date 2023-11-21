@@ -102,6 +102,21 @@ t[info_snp$`_NUM_ID_`] <- info_snp$beta/info_snp$se
 tt <- abs(t)
 t.ind <- sort(tt, decreasing=T, index.return=T, na.last = TRUE)$ix
 
+# generate critical sequences
+alpha <- 1/sqrt(log(p)) #proportion est tends to be larger
+set.seed(1)
+N_simulate <- 1000
+zz <- mvrnorm(N_simulate, rep(0, p), diag(1, p, p))
+Vn <- rep(NA, N_simulate)
+for(i in 1 : N_simulate){
+  z_order <- sort(zz[i,], decreasing = T, index.return = T)$x 
+  p_order <- 1- pnorm(z_order)
+  ind <- 1 : p
+  U <- rep(0, p)
+  U <- abs(ind / p - p_order) / sqrt(p_order/2)
+  Vn[i] <- max(U[2 : floor(p / 2)], 0)
+}
+c05 <- quantile(Vn, 1 - alpha)  
 
 library(MASS)
 library(hdi) 
@@ -128,7 +143,7 @@ sst <- sum((y2-mean(y2))^2)
 pc1 <- pc[ind.train,]
 pc2 <- pc[ind.test,]
 n.test <- length(ind.test)
-pi = MR05(scale(t[!is.na(t)]), 0.002976302) #CHOL
+pi = MR05(scale(t[!is.na(t)]), c05) 
   epsilon <- 0.02*c(1:40) 
   rss.lasso <- rep(NA, length(epsilon))
   lasso.tune <-  matrix(0, length(epsilon), p)
